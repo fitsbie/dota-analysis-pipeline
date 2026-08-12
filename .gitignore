@@ -1,0 +1,26 @@
+# Große erzeugte Daten
+outputs/
+screenshots/
+logs/
+inputs/demos/
+
+# Dota / Video / PDF / große Dateien
+*.dem
+*.pdf
+*.mp4
+*.mkv
+*.avi
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Lokale Konfiguration
+.env
+config/pipeline_config.yaml
+
+# System / Editor
+.DS_Store
+.vscode/
+.idea/
