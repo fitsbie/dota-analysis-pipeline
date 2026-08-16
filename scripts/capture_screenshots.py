@@ -156,71 +156,24 @@ class ScreenshotCapture:
             self.use_fullscreen = True
     
     def _update_window_bounds(self) -> None:
-        """Aktualisiere die Fenster-Grenzen."""
+        """Aktualisiere die Fenster-Grenzen und aktiviere das Fenster."""
         if not self.window_id:
             return
         
         try:
-            # Hole Fenster-Geometrie mit xdotool
-            result = subprocess.run(
-                ['xdotool', 'getwindowgeometry', self.window_id],
+            # Aktiviere das Fenster (bringe es in den Vordergrund)
+            subprocess.run(
+                ['wmctrl', '-i', '-a', self.window_id],
                 capture_output=True,
-                text=True,
-                timeout=5
+                timeout=2
             )
+            logger.debug(f"Fenster {self.window_id} aktiviert")
             
-            if result.returncode == 0:
-                # Parse output: "Position: x,y (screen x), Size: WxH"
-                lines = result.stdout.strip().split('\n')
-                for line in lines:
-                    if 'Position:' in line:
-                        # Extract x, y
-                        pos_part = line.split('Position:')[1].split('(')[0].strip()
-                        x, y = map(int, pos_part.split(','))
-                    elif 'Geometry:' in line:
-                        # Alternative format
-                        geom_part = line.split('Geometry:')[1].strip()
-                        parts = geom_part.split('+')
-                        if len(parts) >= 3:
-                            width, height = map(int, parts[0].split('x'))
-                            x, y = int(parts[1]), int(parts[2])
-                    elif 'Size:' in line:
-                        # Extract width, height
-                        size_part = line.split('Size:')[1].strip()
-                        width, height = map(int, size_part.split('x'))
-                
-                # Versuche alternativ wmctrl
-                if not self.window_bounds:
-                    result = subprocess.run(
-                        ['wmctrl', '-l', '-G'],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-                    if result.returncode == 0:
-                        for line in result.stdout.split('\n'):
-                            if self.window_name in line:
-                                parts = line.split()
-                                if len(parts) >= 5:
-                                    x, y = int(parts[2]), int(parts[3])
-                                    width, height = int(parts[4]), int(parts[5])
-                                    self.window_bounds = (x, y, x + width, y + height)
-                                    logger.info(
-                                        f"Fenster-Grenzen: "
-                                        f"Position ({x}, {y}), Size ({width}x{height})"
-                                    )
-                                    return
-                
-                if not self.window_bounds:
-                    self.window_bounds = (x, y, x + width, y + height)
-                    logger.info(
-                        f"Fenster-Grenzen: "
-                        f"Position ({x}, {y}), Size ({width}x{height})"
-                    )
-                
+            # Kurze Pause damit Fenster Zeit hat sich zu zeigen
+            time.sleep(0.1)
+            
         except Exception as e:
-            logger.warning(f"Fenster-Grenzen konnten nicht bestimmt werden: {e}")
-            self.window_bounds = None
+            logger.debug(f"Fenster konnte nicht aktiviert werden: {e}")
     
     def capture_screenshot(self) -> Optional[Path]:
         """
