@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-Screenshot-Aufnahme für Dota 2.
+Screenshot-Aufnahme für Dota 2 - Wayland & X11 kompatibel.
 
-Im Fenstermodus wird das echte X11- beziehungsweise XWayland-Fenster
-anhand seiner Fenster-ID aufgenommen. Es wird nicht nur ein fester
-Bildschirmbereich ausgeschnitten.
+Funktioniert sowohl auf X11 als auch auf Wayland:
+- wmctrl: Fenster-Suche (funktioniert auf beiden)
+- PIL ImageGrab: Nimmt Bildschirmbereich auf
 
 Benötigt:
-    sudo pacman -S --needed imagemagick xdotool
+    sudo pacman -S --needed wmctrl xdotool
     pip install Pillow
 """
 
 import argparse
-import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,7 +31,7 @@ logger = get_logger(__name__)
 
 
 class ScreenshotCapture:
-    """Nimmt Screenshots eines echten Fensters oder des gesamten Bildschirms auf."""
+    """Nimmt Screenshots eines Fensters oder des gesamten Bildschirms auf."""
 
     def __init__(
         self,
@@ -50,10 +50,12 @@ class ScreenshotCapture:
         self.max_height = max_height
         self.window_name = window_name
         self.use_fullscreen = use_fullscreen
-        self.window_id: Optional[str] = None
+        self.window_bounds: Optional[tuple] = None
+        self.session_type = os.environ.get("XDG_SESSION_TYPE", "unknown")
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Screenshot-Verzeichnis: {self.output_dir.absolute()}")
+        logger.info(f"Session-Typ: {self.session_type}")
 
         if not self.use_fullscreen:
             if not self.window_name:
@@ -62,231 +64,130 @@ class ScreenshotCapture:
                 )
 
             self._check_window_dependencies()
-            self.window_id = self._find_window()
-            logger.info(
-                f"Zielfenster gefunden: '{self.window_name}', "
-                f"Fenster-ID: {self.window_id}"
-            )
+            self._find_window()
+            if self.window_bounds:
+                logger.info(
+                    f"Zielfenster gefunden: '{self.window_name}' "
+                    f"bei {self.window_bounds}"
+                )
+            else:
+                raise RuntimeError(
+                    f"Fenster '{self.window_name}' konnte nicht lokalisiert werden."
+                )
         else:
             logger.info("Expliziter Fullscreen-Modus aktiviert")
 
     def _check_window_dependencies(self) -> None:
-        """Prüft die Programme für die fensterbezogene Aufnahme."""
-        if shutil.which("xdotool") is None:
+        """Prüft die Programme für die Fenster-Suche."""
+        if shutil.which("wmctrl") is None:
             raise RuntimeError(
-                "xdotool wurde nicht gefunden. Installation:\n"
-                "sudo pacman -S --needed xdotool"
+                "wmctrl wurde nicht gefunden. Installation:\n"
+                "sudo pacman -S --needed wmctrl"
             )
 
-        if shutil.which("magick") is None and shutil.which("import") is None:
-            raise RuntimeError(
-                "ImageMagick wurde nicht gefunden. Installation:\n"
-                "sudo pacman -S --needed imagemagick"
-            )
+        logger.debug("wmctrl ist verfügbar")
 
-    def _run_xdotool(self, *args: str, timeout: float = 5.0) -> str:
-        """Führt xdotool aus und gibt dessen Ausgabe zurück."""
-        result = subprocess.run(
-            ["xdotool", *args],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-
-        if result.returncode != 0:
-            message = result.stderr.strip() or result.stdout.strip()
-            raise RuntimeError(
-                f"xdotool {' '.join(args)} fehlgeschlagen: {message}"
-            )
-
-        return result.stdout.strip()
-
-    def _window_geometry(self, window_id: str) -> tuple:
-        """Liest Breite und Höhe eines Fensters aus."""
-        output = self._run_xdotool(
-            "getwindowgeometry",
-            "--shell",
-            window_id,
-        )
-
-        values = {}
-        for line in output.splitlines():
-            if "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            values[key.strip()] = value.strip()
-
-        width = int(values.get("WIDTH", "0"))
-        height = int(values.get("HEIGHT", "0"))
-
-        return width, height
-
-    def _window_title(self, window_id: str) -> str:
-        """Liest den aktuellen Fenstertitel aus."""
-        try:
-            return self._run_xdotool(
-                "getwindowname",
-                window_id,
-                timeout=2.0,
-            )
-        except Exception:
-            return ""
-
-    def _find_window(self) -> str:
+    def _find_window_wmctrl(self) -> Optional[tuple]:
         """
-        Sucht sichtbare Fenster anhand des Namens.
-
-        Wenn mehrere Treffer existieren, wird das größte Fenster verwendet.
-        Dadurch werden kleine Hilfsfenster möglichst vermieden.
+        Sucht Fenster mit wmctrl (funktioniert auf X11 und Wayland).
+        
+        Gibt (x, y, x2, y2) als bbox zurück.
         """
         try:
-            output = self._run_xdotool(
-                "search",
-                "--onlyvisible",
-                "--name",
-                self.window_name,
-            )
-        except RuntimeError as error:
-            session_type = os.environ.get("XDG_SESSION_TYPE", "unbekannt")
-            raise RuntimeError(
-                f"Kein sichtbares Fenster mit dem Namen "
-                f"'{self.window_name}' gefunden.\n"
-                f"Sitzungstyp: {session_type}\n"
-                f"Originalfehler: {error}"
-            ) from error
-
-        window_ids = [
-            line.strip()
-            for line in output.splitlines()
-            if line.strip().isdigit()
-        ]
-
-        if not window_ids:
-            raise RuntimeError(
-                f"Kein sichtbares Fenster mit dem Namen "
-                f"'{self.window_name}' gefunden."
+            result = subprocess.run(
+                ["wmctrl", "-l", "-G"],
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
 
-        candidates = []
+            if result.returncode != 0:
+                logger.debug("wmctrl -l -G fehlgeschlagen")
+                return None
 
-        for window_id in window_ids:
-            try:
-                width, height = self._window_geometry(window_id)
-                title = self._window_title(window_id)
-                area = width * height
-                logger.debug(
-                    f"Fensterkandidat: ID={window_id}, "
-                    f"Titel='{title}', Größe={width}x{height}"
-                )
+            logger.debug(f"wmctrl Output:\n{result.stdout}")
 
-                if width > 0 and height > 0:
-                    candidates.append(
-                        (area, window_id, width, height, title)
+            for line in result.stdout.split("\n"):
+                if not line.strip():
+                    continue
+                if self.window_name not in line:
+                    continue
+
+                logger.debug(f"Matching line: {repr(line)}")
+                
+                # Format: ID DESK X Y W H HOSTNAME NAME
+                # Beispiel: "0x02600013  0 308 184 1920 1200 pwnk Dota 2"
+                parts = line.split()
+                if len(parts) < 6:
+                    continue
+
+                try:
+                    x = int(parts[2])
+                    y = int(parts[3])
+                    w = int(parts[4])
+                    h = int(parts[5])
+                    
+                    bbox = (x, y, x + w, y + h)
+                    logger.debug(
+                        f"Fenster gefunden (wmctrl): Position=({x},{y}), "
+                        f"Größe=({w}x{h}), bbox={bbox}"
                     )
+                    return bbox
 
-            except Exception as error:
+                except (ValueError, IndexError) as e:
+                    logger.debug(f"Fehler beim Parsen: {e}")
+                    continue
+
+            logger.debug(f"Fenster '{self.window_name}' nicht in wmctrl output gefunden")
+            return None
+
+        except Exception as e:
+            logger.debug(f"wmctrl Fehler: {e}")
+            return None
+
+    def _find_window(self) -> None:
+        """Sucht das Fenster und speichert die Bounds."""
+        # Versuche wmctrl (funktioniert auf Wayland und X11)
+        self.window_bounds = self._find_window_wmctrl()
+        
+        if self.window_bounds:
+            return
+        
+        # Falls wmctrl nicht funktioniert, vollständiger Fehler
+        logger.error(
+            f"Fenster '{self.window_name}' konnte nicht gefunden werden.\n"
+            f"Session-Typ: {self.session_type}\n"
+            f"Tipps:\n"
+            f"  - Stelle sicher dass Dota 2 läuft\n"
+            f"  - Versuche mit --fullscreen als Workaround\n"
+            f"  - Prüfe: wmctrl -l (sollte Dota 2 zeigen)"
+        )
+        raise RuntimeError(
+            f"Fenster '{self.window_name}' nicht gefunden. "
+            "Siehe logs für Details."
+        )
+
+    def _update_window_bounds(self) -> None:
+        """Aktualisiere Fenster-Bounds (Position kann sich ändern)."""
+        if not self.window_name:
+            return
+
+        new_bounds = self._find_window_wmctrl()
+        
+        if new_bounds:
+            if new_bounds != self.window_bounds:
                 logger.debug(
-                    f"Fenster-ID {window_id} konnte nicht geprüft werden: "
-                    f"{error}"
+                    f"Fenster-Position aktualisiert: "
+                    f"{self.window_bounds} -> {new_bounds}"
                 )
-
-        if not candidates:
-            raise RuntimeError(
-                f"Fenster '{self.window_name}' wurde gefunden, "
-                "aber seine Größe konnte nicht ermittelt werden."
-            )
-
-        candidates.sort(reverse=True)
-
-        _, window_id, width, height, title = candidates[0]
-
-        logger.info(
-            f"Verwende Fenster: ID={window_id}, "
-            f"Titel='{title}', Größe={width}x{height}"
-        )
-
-        return window_id
-
-    def _window_still_exists(self) -> bool:
-        """Prüft, ob das gespeicherte Fenster noch vorhanden ist."""
-        if not self.window_id:
-            return False
-
-        result = subprocess.run(
-            ["xdotool", "getwindowname", self.window_id],
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-
-        return result.returncode == 0
-
-    def _capture_window(self) -> Image.Image:
-        """Nimmt das Fenster direkt anhand seiner X11-Fenster-ID auf."""
-        if not self._window_still_exists():
-            logger.warning("Gespeichertes Fenster existiert nicht mehr. Suche erneut.")
-            self.window_id = self._find_window()
-
-        hexadecimal_id = hex(int(self.window_id))
-
-        if shutil.which("magick"):
-            command = [
-                "magick",
-                "import",
-                "-silent",
-                "-window",
-                hexadecimal_id,
-                "png:-",
-            ]
+            self.window_bounds = new_bounds
         else:
-            command = [
-                "import",
-                "-silent",
-                "-window",
-                hexadecimal_id,
-                "png:-",
-            ]
-
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            timeout=15,
-        )
-
-        if result.returncode != 0:
-            error_message = result.stderr.decode(
-                "utf-8",
-                errors="replace",
-            ).strip()
-            raise RuntimeError(
-                f"Fensteraufnahme fehlgeschlagen. "
-                f"Fenster-ID: {hexadecimal_id}. "
-                f"ImageMagick: {error_message}"
-            )
-
-        if not result.stdout:
-            raise RuntimeError(
-                "ImageMagick hat keine Bilddaten zurückgegeben."
-            )
-
-        with Image.open(io.BytesIO(result.stdout)) as source_image:
-            screenshot = source_image.copy()
-
-        logger.debug(
-            f"Fenster direkt aufgenommen: "
-            f"ID={hexadecimal_id}, Größe={screenshot.size}"
-        )
-
-        return screenshot
+            logger.warning("Fenster konnte nicht mehr lokalisiert werden")
 
     def _prepare_image(self, image: Image.Image) -> Image.Image:
         """Konvertiert und skaliert das Bild bei Bedarf."""
         if image.mode == "RGBA":
-            background = Image.new(
-                "RGB",
-                image.size,
-                (0, 0, 0),
-            )
+            background = Image.new("RGB", image.size, (0, 0, 0))
             background.paste(image, mask=image.getchannel("A"))
             image = background
         elif image.mode != "RGB":
@@ -294,7 +195,6 @@ class ScreenshotCapture:
 
         if self.max_width or self.max_height:
             width, height = image.size
-
             maximum_width = self.max_width or width
             maximum_height = self.max_height or height
 
@@ -303,7 +203,6 @@ class ScreenshotCapture:
                     (maximum_width, maximum_height),
                     Image.Resampling.LANCZOS,
                 )
-
                 logger.debug(f"Bild skaliert auf: {image.size}")
 
         return image
@@ -311,23 +210,27 @@ class ScreenshotCapture:
     def capture_screenshot(self) -> Optional[Path]:
         """Nimmt einen Screenshot auf und speichert ihn als JPEG."""
         try:
-            if self.use_fullscreen:
+            # Aktualisiere Position vor jedem Screenshot
+            if not self.use_fullscreen and self.window_name:
+                self._update_window_bounds()
+
+            # Nimm Screenshot auf
+            if self.use_fullscreen or not self.window_bounds:
                 screenshot = ImageGrab.grab()
-                logger.debug(
-                    f"Fullscreen-Screenshot aufgenommen: {screenshot.size}"
-                )
+                logger.debug(f"Fullscreen-Screenshot: {screenshot.size}")
             else:
-                screenshot = self._capture_window()
+                logger.debug(f"Fenster-bbox: {self.window_bounds}")
+                screenshot = ImageGrab.grab(bbox=self.window_bounds)
+                logger.debug(
+                    f"Fenster-Screenshot: {screenshot.size} "
+                    f"bei {self.window_bounds}"
+                )
 
             screenshot = self._prepare_image(screenshot)
 
-            timestamp = datetime.now().strftime(
-                "%Y%m%d_%H%M%S_%f"
-            )[:-3]
-
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
             filepath = (
-                self.output_dir /
-                f"screenshot_{timestamp}.jpg"
+                self.output_dir / f"screenshot_{timestamp}.jpg"
             )
 
             screenshot.save(
@@ -341,7 +244,7 @@ class ScreenshotCapture:
 
         except Exception as error:
             logger.error(
-                f"Fehler bei der Screenshot-Aufnahme: {error}",
+                f"Fehler bei Screenshot-Aufnahme: {error}",
                 exc_info=True,
             )
             return None
@@ -358,7 +261,7 @@ class ScreenshotCapture:
 
         logger.info(
             f"Starte Aufnahme: Intervall={self.interval}s, "
-            f"Dauer={duration}, Maximum={max_screenshots}"
+            f"Dauer={duration}s, Maximum={max_screenshots}"
         )
 
         try:
@@ -395,7 +298,6 @@ class ScreenshotCapture:
                     )
 
                 next_capture += self.interval
-
                 current_time = time.monotonic()
 
                 if next_capture < current_time:
@@ -406,8 +308,7 @@ class ScreenshotCapture:
 
         elapsed = time.monotonic() - start_time
         logger.info(
-            f"Aufnahme beendet: {count} Screenshots "
-            f"in {elapsed:.1f}s"
+            f"Aufnahme beendet: {count} Screenshots in {elapsed:.1f}s"
         )
 
         return count
@@ -416,7 +317,7 @@ class ScreenshotCapture:
 def main() -> int:
     """Programmeinstieg."""
     parser = argparse.ArgumentParser(
-        description="Nimmt Screenshots des Dota-2-Fensters auf"
+        description="Nimmt Screenshots des Dota-2-Fensters auf (X11/Wayland)"
     )
 
     parser.add_argument("--interval", type=float, default=2.0)
