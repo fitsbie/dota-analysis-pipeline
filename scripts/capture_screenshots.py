@@ -101,7 +101,33 @@ class ScreenshotCapture:
     def _setup_window_targeting(self) -> None:
         """Suche und konfiguriere das Ziel-Fenster."""
         try:
-            # Versuche xdotool zu verwenden (Linux/Cashy OS)
+            # Versuche zuerst wmctrl (zuverlässiger auf Cashy OS)
+            result = subprocess.run(
+                ['wmctrl', '-l', '-G'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if self.window_name in line:
+                        # Format: "ID DESK X Y W H HOSTNAME NAME"
+                        parts = line.split()
+                        if len(parts) >= 6:
+                            try:
+                                x, y = int(parts[2]), int(parts[3])
+                                width, height = int(parts[4]), int(parts[5])
+                                self.window_bounds = (x, y, x + width, y + height)
+                                logger.info(
+                                    f"Fenster gefunden (wmctrl): '{self.window_name}' "
+                                    f"bei ({x}, {y}), Größe: {width}x{height}"
+                                )
+                                return
+                            except (ValueError, IndexError):
+                                continue
+            
+            # Fallback: Versuche xdotool
             result = subprocess.run(
                 ['xdotool', 'search', '--name', self.window_name],
                 capture_output=True,
@@ -111,20 +137,19 @@ class ScreenshotCapture:
             
             if result.returncode == 0 and result.stdout.strip():
                 self.window_id = result.stdout.strip().split('\n')[0]
-                logger.info(f"Fenster gefunden: '{self.window_name}' (ID: {self.window_id})")
+                logger.info(f"Fenster gefunden (xdotool): '{self.window_name}' (ID: {self.window_id})")
                 self._update_window_bounds()
-            else:
-                logger.warning(
-                    f"Fenster '{self.window_name}' nicht gefunden. "
-                    "Verwende Fullscreen-Modus."
-                )
-                self.use_fullscreen = True
-                
-        except FileNotFoundError:
+                return
+            
+            # Wenn nichts gefunden: Fallback auf Fullscreen
             logger.warning(
-                "xdotool nicht verfügbar. "
-                "Unter Cashy OS/Linux: sudo apt install xdotool"
+                f"Fenster '{self.window_name}' nicht gefunden (weder wmctrl noch xdotool). "
+                "Verwende Fullscreen-Modus."
             )
+            self.use_fullscreen = True
+                
+        except FileNotFoundError as e:
+            logger.warning(f"Fenster-Tool nicht verfügbar ({e}). Verwende Fullscreen.")
             self.use_fullscreen = True
         except Exception as e:
             logger.warning(f"Fenster-Targeting fehlgeschlagen: {e}. Verwende Fullscreen.")
