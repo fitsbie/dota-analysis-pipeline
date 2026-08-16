@@ -110,10 +110,13 @@ class ScreenshotCapture:
             )
             
             if result.returncode == 0:
+                logger.debug(f"wmctrl -l -G Output:\n{result.stdout}")
                 for line in result.stdout.split('\n'):
                     if self.window_name in line:
+                        logger.debug(f"Matching line: {repr(line)}")
                         # Format: "ID DESK X Y W H HOSTNAME NAME"
                         parts = line.split()
+                        logger.debug(f"Parts nach split(): {parts}")
                         if len(parts) >= 6:
                             try:
                                 x, y = int(parts[2]), int(parts[3])
@@ -121,7 +124,8 @@ class ScreenshotCapture:
                                 self.window_bounds = (x, y, x + width, y + height)
                                 logger.info(
                                     f"Fenster gefunden (wmctrl): '{self.window_name}' "
-                                    f"bei ({x}, {y}), Größe: {width}x{height}"
+                                    f"bei ({x}, {y}), Größe: {width}x{height}, "
+                                    f"bbox: {self.window_bounds}"
                                 )
                                 
                                 # Aktiviere das Fenster (bringe in Vordergrund)
@@ -137,7 +141,8 @@ class ScreenshotCapture:
                                     logger.warning(f"Fenster konnte nicht aktiviert werden: {e}")
                                 
                                 return
-                            except (ValueError, IndexError):
+                            except (ValueError, IndexError) as e:
+                                logger.error(f"Fehler beim Parsen: {e}")
                                 continue
             
             # Fallback: Versuche xdotool
@@ -201,6 +206,7 @@ class ScreenshotCapture:
                 logger.debug(f"Fullscreen-Screenshot aufgenommen: {screenshot.size}")
             else:
                 # Fenster-basierter Screenshot
+                logger.info(f"Verwende window_bounds: {self.window_bounds}")
                 screenshot = ImageGrab.grab(bbox=self.window_bounds)
                 logger.debug(
                     f"Fenster-Screenshot aufgenommen: "
