@@ -6,21 +6,35 @@ inputs/demos/
 
 # Dota / Video / PDF / große Dateien
 *.dem
+*.dota2
 *.pdf
 *.mp4
 *.mkv
 *.avi
+*.mov
 
 # Python
 .venv/
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
 
 # Lokale Konfiguration
 .env
+config/local_*.yaml
 config/pipeline_config.yaml
 
 # System / Editor
 .DS_Store
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+# IDE
+.pytest_cache/
+.coverage
