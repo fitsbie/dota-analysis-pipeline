@@ -123,6 +123,19 @@ class ScreenshotCapture:
                                     f"Fenster gefunden (wmctrl): '{self.window_name}' "
                                     f"bei ({x}, {y}), Größe: {width}x{height}"
                                 )
+                                
+                                # Aktiviere das Fenster (bringe in Vordergrund)
+                                try:
+                                    subprocess.run(
+                                        ['wmctrl', '-a', self.window_name],
+                                        capture_output=True,
+                                        timeout=2
+                                    )
+                                    logger.debug(f"Fenster '{self.window_name}' aktiviert")
+                                    time.sleep(0.2)  # Pause damit Fenster sich zeigen kann
+                                except Exception as e:
+                                    logger.warning(f"Fenster konnte nicht aktiviert werden: {e}")
+                                
                                 return
                             except (ValueError, IndexError):
                                 continue
@@ -156,21 +169,20 @@ class ScreenshotCapture:
             self.use_fullscreen = True
     
     def _update_window_bounds(self) -> None:
-        """Aktualisiere die Fenster-Grenzen und aktiviere das Fenster."""
+        """Aktualisiere die Fenster-Grenzen und aktiviere das Fenster (xdotool)."""
         if not self.window_id:
             return
         
         try:
             # Aktiviere das Fenster (bringe es in den Vordergrund)
+            # Verwende windowactivate statt -a flag
             subprocess.run(
-                ['wmctrl', '-i', '-a', self.window_id],
+                ['xdotool', 'windowactivate', self.window_id],
                 capture_output=True,
                 timeout=2
             )
             logger.debug(f"Fenster {self.window_id} aktiviert")
-            
-            # Kurze Pause damit Fenster Zeit hat sich zu zeigen
-            time.sleep(0.1)
+            time.sleep(0.2)  # Pause damit Fenster sich zeigen kann
             
         except Exception as e:
             logger.debug(f"Fenster konnte nicht aktiviert werden: {e}")
