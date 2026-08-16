@@ -217,6 +217,18 @@ class ScreenshotCapture:
                     f"{screenshot.size} bei {self.window_bounds}"
                 )
             
+            # Konvertiere RGBA zu RGB (JPEG unterstützt kein Alpha-Kanal)
+            if screenshot.mode == 'RGBA':
+                # Erstelle weißen Hintergrund für Alpha-Kanal
+                background = Image.new('RGB', screenshot.size, (255, 255, 255))
+                background.paste(screenshot, mask=screenshot.split()[3])  # split()[3] = Alpha-Kanal
+                screenshot = background
+                logger.debug("RGBA zu RGB konvertiert")
+            elif screenshot.mode != 'RGB':
+                # Konvertiere andere Modi auch zu RGB
+                screenshot = screenshot.convert('RGB')
+                logger.debug(f"Mode {screenshot.mode} zu RGB konvertiert")
+            
             # Skaliere falls nötig
             if self.max_width or self.max_height:
                 screenshot = self._resize_image(screenshot)
