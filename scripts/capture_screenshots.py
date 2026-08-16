@@ -174,23 +174,37 @@ class ScreenshotCapture:
             self.use_fullscreen = True
     
     def _update_window_bounds(self) -> None:
-        """Aktualisiere die Fenster-Grenzen und aktiviere das Fenster (xdotool)."""
-        if not self.window_id:
+        """Aktualisiere die Fenster-Grenzen (Position kann sich ändern!)."""
+        if not self.window_name:
             return
         
         try:
-            # Aktiviere das Fenster (bringe es in den Vordergrund)
-            # Verwende windowactivate statt -a flag
-            subprocess.run(
-                ['xdotool', 'windowactivate', self.window_id],
+            # Hole aktuelle Fenster-Position mit wmctrl
+            result = subprocess.run(
+                ['wmctrl', '-l', '-G'],
                 capture_output=True,
+                text=True,
                 timeout=2
             )
-            logger.debug(f"Fenster {self.window_id} aktiviert")
-            time.sleep(0.2)  # Pause damit Fenster sich zeigen kann
             
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if self.window_name in line:
+                        parts = line.split()
+                        if len(parts) >= 6:
+                            try:
+                                x, y = int(parts[2]), int(parts[3])
+                                width, height = int(parts[4]), int(parts[5])
+                                old_bounds = self.window_bounds
+                                self.window_bounds = (x, y, x + width, y + height)
+                                
+                                if old_bounds != self.window_bounds:
+                                    logger.debug(f"Fenster-Position aktualisiert: {old_bounds} -> {self.window_bounds}")
+                                return
+                            except (ValueError, IndexError):
+                                continue
         except Exception as e:
-            logger.debug(f"Fenster konnte nicht aktiviert werden: {e}")
+            logger.debug(f"Fenster-Position konnte nicht aktualisiert werden: {e}")
     
     def capture_screenshot(self) -> Optional[Path]:
         """
@@ -200,6 +214,10 @@ class ScreenshotCapture:
             Path zur gespeicherten Datei oder None bei Fehler
         """
         try:
+            # Aktualisiere Fenster-Position vor jedem Screenshot
+            if not self.use_fullscreen and self.window_name:
+                self._update_window_bounds()
+            
             # Nimm Screenshot auf (Fenster oder Fullscreen)
             if self.use_fullscreen or not self.window_bounds:
                 screenshot = ImageGrab.grab()
