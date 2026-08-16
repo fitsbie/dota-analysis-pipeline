@@ -1,8 +1,6 @@
 #!/bin/bash
-"""
-Cashy OS Setup Helper - Installiert automatisch Abhängigkeiten
-Erkennt den Package Manager automatisch
-"""
+# Cashy OS Setup Helper - Installiert automatisch Abhängigkeiten
+# Erkennt den Package Manager automatisch
 
 set -e
 
@@ -64,10 +62,25 @@ esac || {
 
 # Python Packages
 echo "📦 Installiere Python-Abhängigkeiten..."
-pip install -q Pillow pytesseract || pip3 install -q Pillow pytesseract || {
-    echo "❌ Fehler: Python-Pakete konnten nicht installiert werden"
-    exit 1
-}
+
+case $PM in
+    pacman)
+        # Arch-basiert: Nutze pacman für Python-Pakete
+        echo "   (Via pacman für Arch/Cashy OS)"
+        sudo pacman -S --noconfirm --needed python-pillow python-pytesseract || {
+            echo "⚠️  Warnung: Pacman-Pakete konnten nicht installiert werden"
+            echo "   Versuche pip mit --break-system-packages..."
+            pip install --break-system-packages -q Pillow pytesseract || echo "   Pip-Installation auch fehlgeschlagen"
+        }
+        ;;
+    *)
+        # Andere: Nutze pip
+        pip install -q Pillow pytesseract || pip3 install -q Pillow pytesseract || {
+            echo "❌ Fehler: Python-Pakete konnten nicht installiert werden"
+            exit 1
+        }
+        ;;
+esac
 
 echo ""
 echo "✅ Setup abgeschlossen!"
