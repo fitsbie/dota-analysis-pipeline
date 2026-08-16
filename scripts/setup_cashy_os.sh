@@ -35,9 +35,9 @@ echo "✅ Erkannter Package Manager: $PM"
 echo ""
 
 # System Tools
-echo "📦 Installiere System-Tools (xdotool, wmctrl)..."
-$INSTALL_CMD xdotool wmctrl || {
-    echo "⚠️  Warnung: Könnte xdotool/wmctrl nicht installieren"
+echo "📦 Installiere System-Tools (xdotool, wmctrl, imagemagick)..."
+$INSTALL_CMD xdotool wmctrl imagemagick || {
+    echo "⚠️  Warnung: Könnte xdotool/wmctrl/imagemagick nicht installieren"
     echo "   Das ist ggf. kein Problem - Fallback auf Fullscreen ist aktiv"
 }
 
